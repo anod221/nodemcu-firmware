@@ -38,7 +38,7 @@
 #include "c_types.h"
 #include "ets_sys.h"
 #include "osapi.h"
-#define EFAULT 14
+//#define EFAULT 14
 
 //#define LWIP_PROVIDE_ERRNO
 

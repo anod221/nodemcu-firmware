@@ -36,6 +36,8 @@ SUBDIRS= 					\
 	u8glib 					\
 	ucglib					\
 	smart 					\
+	irproto					\
+	rfid					\
 	modules 				\
 	spiffs 					\
 	crypto 					\
@@ -46,6 +48,8 @@ SUBDIRS= 					\
 	fatfs					\
 	esp-gdbstub				\
 	websocket				\
+	swTimer					\
+	misc					\
 	pm					\
 	sjson					\
  	sqlite3					\
@@ -88,6 +92,8 @@ COMPONENTS_eagle.app.v6 = 			\
 	u8glib/u8glib.a 			\
 	ucglib/ucglib.a 			\
 	smart/smart.a 				\
+	irproto/irproto.a			\
+	rfid/rfid.a				\
 	spiffs/spiffs.a 			\
 	fatfs/libfatfs.a			\
 	crypto/libcrypto.a 			\
@@ -100,6 +106,8 @@ COMPONENTS_eagle.app.v6 = 			\
 	net/libnodemcu_net.a			\
 	mbedtls/libmbedtls.a      		\
 	modules/libmodules.a			\
+	swTimer/libswtimer.a			\
+	misc/libmisc.a				\
 	sjson/libsjson.a			\
   sqlite3/libsqlite3.a			\
 	

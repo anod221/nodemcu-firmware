@@ -18,7 +18,7 @@
 #include "gdbstub.h"
 #include "gdbstub-entry.h"
 #include "gdbstub-cfg.h"
-
+#include "xtensa/config/core-isa.h"
 
 //From xtruntime-frames.h
 struct XTensa_exception_frame_s {

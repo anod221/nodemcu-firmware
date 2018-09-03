@@ -22,6 +22,13 @@
 //variables for wifi event monitor
 static task_handle_t wifi_event_monitor_task_id; //variable to hold task id for task handler(process_event_queue)
 
+typedef struct evt_queue{
+    System_Event_t *evt;
+    struct evt_queue * next;
+}evt_queue_t; //structure to hold pointers to event info and next item in queue
+
+static evt_queue_t *wifi_event_queue_head; //pointer to beginning of queue
+static evt_queue_t *wifi_event_queue_tail; //pointer to end of queue
 static int wifi_event_cb_ref[EVENT_MAX+1] = { [0 ... EVENT_MAX] = LUA_NOREF}; //holds references to registered Lua callbacks
 
 #ifdef LUA_USE_MODULES_WIFI_MONITOR
@@ -55,11 +62,9 @@ int wifi_event_monitor_register(lua_State* L)
   }
 }
 
-static sint32_t event_queue_ref = LUA_NOREF;
-
 static void wifi_event_monitor_handle_event_cb(System_Event_t *evt)
 {
-  EVENT_DBG("was called (Event:%d)", evt->event);
+  EVENT_DBG("\n\twifi_event_monitor_handle_event_cb is called\n");
 
 #ifdef LUA_USE_MODULES_WIFI_MONITOR
   if (hook_fn && hook_fn(evt)) {
@@ -74,66 +79,38 @@ static void wifi_event_monitor_handle_event_cb(System_Event_t *evt)
           evt->event == EVENT_SOFTAPMODE_STADISCONNECTED || evt->event == EVENT_SOFTAPMODE_PROBEREQRECVED ||
           evt->event == EVENT_OPMODE_CHANGED)))
   {
-    lua_State* L = lua_getstate();
-    if(event_queue_ref == LUA_NOREF){ //if event queue has not been created, create it now
-      lua_newtable(L);
-      event_queue_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    evt_queue_t *temp = (evt_queue_t*)c_malloc(sizeof(evt_queue_t)); //allocate memory for new queue item
+    temp->evt = (System_Event_t*)c_malloc(sizeof(System_Event_t)); //allocate memory to hold event structure
+    if(!temp || !temp->evt)
+    {
+      luaL_error(lua_getstate(), "wifi.eventmon malloc: out of memory");
+      return;
     }
-    lua_rawgeti(L, LUA_REGISTRYINDEX, event_queue_ref);
+    c_memcpy(temp->evt, evt, sizeof(System_Event_t)); //copy event data to new struct
 
-    System_Event_t* evt_tmp = lua_newuserdata(L, sizeof(System_Event_t));
-    c_memcpy(evt_tmp, evt, sizeof(System_Event_t)); //copy event data to new struct
-    sint32_t evt_ud_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    size_t queue_len = lua_objlen(L, -1);
-
-    //add event to queue
-    lua_pushnumber(L, queue_len+1);
-    lua_pushnumber(L, evt_ud_ref);
-    lua_rawset(L, -3);
-
-    if(queue_len == 0){ //if queue was empty, post task
-      EVENT_DBG("Posting task");
+    if(wifi_event_queue_head == NULL && wifi_event_queue_tail == NULL)// if queue is empty add item to queue
+    {
+      wifi_event_queue_head = wifi_event_queue_tail = temp;
+      EVENT_DBG("\n\tqueue empty, adding event and posting task\n");
       task_post_low(wifi_event_monitor_task_id, false);
     }
-    else{
-      EVENT_DBG("Appending queue, items in queue: %d", lua_objlen(L, -1));
-
+    else //if queue is not empty append item to end of queue
+    {
+      wifi_event_queue_tail->next=temp;
+      wifi_event_queue_tail=temp;
+      EVENT_DBG("\n\tqueue not empty, appending queue\n");
     }
-    lua_pop(L, 1);
-   }  //else{} //there are no callbacks registered, so the event can't be processed
+  }
 }
+
 
 static void wifi_event_monitor_process_event_queue(task_param_t param, uint8 priority)
 {
   lua_State* L = lua_getstate();
-  lua_rawgeti(L, LUA_REGISTRYINDEX, event_queue_ref);
-  int index = 1;
-  lua_rawgeti(L, 1, index);
-  sint32 event_ref = lua_tonumber(L, -1);
-  lua_pop(L, 1);
+  evt_queue_t *temp = wifi_event_queue_head; //copy event_queue_head pointer to temporary pointer
+  System_Event_t *evt = temp->evt; //copy event data pointer to temporary pointer
 
-  //remove event reference from queue
-  int queue_length = lua_objlen(L, 1);
-  lua_rawgeti(L, 1, index);
-  for(; index<queue_length;index++){
-    lua_rawgeti(L, 1, index+1);
-    lua_rawseti(L, 1, index);
-  }
-  lua_pushnil(L);
-  lua_rawseti(L, 1, queue_length);
-  lua_pop(L, 1);
-
-  lua_rawgeti(L, LUA_REGISTRYINDEX, event_ref); //get event userdata from registry
-  System_Event_t *evt = lua_touserdata(L, -1);
-
-  lua_pop(L, 1); //pop userdata from stack
-
-  queue_length = lua_objlen(L, 1);
-  if (queue_length>0){
-    task_post_low(wifi_event_monitor_task_id, false); //post task to process next item in queue
-    EVENT_DBG("%d events left in queue, posting task", queue_length);
-  }
-  lua_pop(L, 1); //pop event queue from stack
+  EVENT_DBG("\t\tevent %u\n", evt->event);
 
   if(wifi_event_cb_ref[evt->event] != LUA_NOREF) // check if user has registered a callback
   {
@@ -153,97 +130,107 @@ static void wifi_event_monitor_process_event_queue(task_param_t param, uint8 pri
   switch (evt->event)
   {
     case EVENT_STAMODE_CONNECTED:
-      EVENT_DBG("Event: %d (STAMODE_CONNECTED)", EVENT_STAMODE_CONNECTED);
+      EVENT_DBG("\n\tSTAMODE_CONNECTED\n");
       wifi_add_sprintf_field(L, "SSID", (char*)evt->event_info.connected.ssid);
       wifi_add_sprintf_field(L, "BSSID", MACSTR, MAC2STR(evt->event_info.connected.bssid));
       wifi_add_int_field(L, "channel", evt->event_info.connected.channel);
-      EVENT_DBG("Connected to SSID %s, Channel %d",
+      EVENT_DBG("\tConnected to SSID %s, Channel %d\n",
           evt->event_info.connected.ssid,
           evt->event_info.connected.channel);
       break;
 
     case EVENT_STAMODE_DISCONNECTED:
-      EVENT_DBG("Event: %d (STAMODE_DISCONNECTED)", EVENT_STAMODE_DISCONNECTED);
+      EVENT_DBG("\n\tSTAMODE_DISCONNECTED\n");
       wifi_add_sprintf_field(L, "SSID", (char*)evt->event_info.disconnected.ssid);
       wifi_add_int_field(L, "reason", evt->event_info.disconnected.reason);
       wifi_add_sprintf_field(L, "BSSID", MACSTR, MAC2STR(evt->event_info.disconnected.bssid));
-      EVENT_DBG("Disconnect from SSID %s, reason %d",
+      EVENT_DBG("\tDisconnect from SSID %s, reason %d\n",
           evt->event_info.disconnected.ssid,
           evt->event_info.disconnected.reason);
       break;
 
     case EVENT_STAMODE_AUTHMODE_CHANGE:
-      EVENT_DBG("Event: %d (STAMODE_AUTHMODE_CHANGE)", EVENT_STAMODE_AUTHMODE_CHANGE);
+      EVENT_DBG("\n\tSTAMODE_AUTHMODE_CHANGE\n");
       wifi_add_int_field(L, "old_auth_mode", evt->event_info.auth_change.old_mode);
       wifi_add_int_field(L, "new_auth_mode", evt->event_info.auth_change.new_mode);
-      EVENT_DBG("Authmode: %u -> %u",
+      EVENT_DBG("\tAuthmode: %u -> %u\n",
           evt->event_info.auth_change.old_mode,
           evt->event_info.auth_change.new_mode);
       break;
 
     case EVENT_STAMODE_GOT_IP:
-      EVENT_DBG("Event: %d (STAMODE_GOT_IP)", EVENT_STAMODE_GOT_IP);
+      EVENT_DBG("\n\tGOT_IP\n");
       wifi_add_sprintf_field(L, "IP", IPSTR, IP2STR(&evt->event_info.got_ip.ip));
       wifi_add_sprintf_field(L, "netmask", IPSTR, IP2STR(&evt->event_info.got_ip.mask));
       wifi_add_sprintf_field(L, "gateway", IPSTR, IP2STR(&evt->event_info.got_ip.gw));
-      EVENT_DBG("IP:" IPSTR ",Mask:" IPSTR ",GW:" IPSTR "",
+      EVENT_DBG("\tIP:" IPSTR ",Mask:" IPSTR ",GW:" IPSTR "\n",
           IP2STR(&evt->event_info.got_ip.ip),
           IP2STR(&evt->event_info.got_ip.mask),
           IP2STR(&evt->event_info.got_ip.gw));
       break;
 
     case EVENT_STAMODE_DHCP_TIMEOUT:
-      EVENT_DBG("Event: %d (STAMODE_DHCP_TIMEOUT)", EVENT_STAMODE_DHCP_TIMEOUT);
+      EVENT_DBG("\n\tSTAMODE_DHCP_TIMEOUT\n");
       break;
 
     case EVENT_SOFTAPMODE_STACONNECTED:
-      EVENT_DBG("Event: %d (SOFTAPMODE_STACONNECTED)", EVENT_SOFTAPMODE_STACONNECTED);
+      EVENT_DBG("\n\tSOFTAPMODE_STACONNECTED\n");
       wifi_add_sprintf_field(L, "MAC", MACSTR, MAC2STR(evt->event_info.sta_connected.mac));
       wifi_add_int_field(L, "AID", evt->event_info.sta_connected.aid);
-      EVENT_DBG("Station: " MACSTR "join, AID = %d",
+      EVENT_DBG("\tStation: " MACSTR "join, AID = %d\n",
           MAC2STR(evt->event_info.sta_connected.mac),
           evt->event_info.sta_connected.aid);
       break;
 
     case EVENT_SOFTAPMODE_STADISCONNECTED:
-      EVENT_DBG("Event: %d (SOFTAPMODE_STADISCONNECTED)", EVENT_SOFTAPMODE_STADISCONNECTED);
+      EVENT_DBG("\n\tSOFTAPMODE_STADISCONNECTED\n");
       wifi_add_sprintf_field(L, "MAC", MACSTR, MAC2STR(evt->event_info.sta_disconnected.mac));
       wifi_add_int_field(L, "AID", evt->event_info.sta_disconnected.aid);
-      EVENT_DBG("station: " MACSTR "leave, AID = %d",
+      EVENT_DBG("\tstation: " MACSTR "leave, AID = %d\n",
           MAC2STR(evt->event_info.sta_disconnected.mac),
           evt->event_info.sta_disconnected.aid);
       break;
 
     case EVENT_SOFTAPMODE_PROBEREQRECVED:
-      EVENT_DBG("Event: %d (SOFTAPMODE_PROBEREQRECVED)", EVENT_SOFTAPMODE_PROBEREQRECVED);
+      EVENT_DBG("\n\tSOFTAPMODE_PROBEREQRECVED\n");
       wifi_add_sprintf_field(L, "MAC", MACSTR, MAC2STR(evt->event_info.ap_probereqrecved.mac));
       wifi_add_int_field(L, "RSSI", evt->event_info.ap_probereqrecved.rssi);
-      EVENT_DBG("Station PROBEREQ: " MACSTR " RSSI = %d",
+      EVENT_DBG("Station PROBEREQ: " MACSTR " RSSI = %d\n",
           MAC2STR(evt->event_info.ap_probereqrecved.mac),
           evt->event_info.ap_probereqrecved.rssi);
       break;
 
     case EVENT_OPMODE_CHANGED:
-      EVENT_DBG("Event: %d (OPMODE_CHANGED)", EVENT_OPMODE_CHANGED);
+      EVENT_DBG("\n\tOPMODE_CHANGED\n");
       wifi_add_int_field(L, "old_mode", evt->event_info.opmode_changed.old_opmode);
       wifi_add_int_field(L, "new_mode", evt->event_info.opmode_changed.new_opmode);
-      EVENT_DBG("opmode: %u -> %u",
+      EVENT_DBG("\topmode: %u -> %u\n",
           evt->event_info.opmode_changed.old_opmode,
           evt->event_info.opmode_changed.new_opmode);
       break;
 
     default://if event is not implemented, return event id
-      EVENT_DBG("Event: %d (switch/case default)", evt->event);
+      EVENT_DBG("\n\tswitch/case default\n");
       wifi_add_sprintf_field(L, "info", "event %u not implemented", evt->event);
       break;
   }
 
-
-  luaL_unref(L, LUA_REGISTRYINDEX, event_ref); //the userdata containing event info is no longer needed
-  event_ref = LUA_NOREF;
-
   lua_call(L, 1, 0); //execute user's callback and pass Lua table
-  return;
+
+  if (wifi_event_queue_head == wifi_event_queue_tail) //if queue is empty..
+  {
+    wifi_event_queue_head = wifi_event_queue_tail = NULL; //set queue pointers to NULL
+    EVENT_DBG("\n\tQueue empty\n");
+  }
+  else //if queue is not empty...
+  {
+    wifi_event_queue_head = wifi_event_queue_head->next; //append item to end of queue
+    EVENT_DBG("\n\tmore in queue, posting task...\n");
+    task_post_low(wifi_event_monitor_task_id, false); //post task to process next item in queue
+  }
+
+  c_free(evt); //free memory used by event structure
+  c_free(temp); //free memory used by queue structure
 }
 
 #ifdef WIFI_EVENT_MONITOR_DISCONNECT_REASON_LIST_ENABLE

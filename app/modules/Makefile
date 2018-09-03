@@ -57,6 +57,8 @@ INCLUDES += -I ../sjson
 INCLUDES += -I ../websocket
 INCLUDES += -I ../pm
 INCLUDES += -I ../sqlite3
+INCLUDES += -I ../irproto
+INCLUDES += -I ../rfid
 PDIR := ../$(PDIR)
 sinclude $(PDIR)Makefile
 

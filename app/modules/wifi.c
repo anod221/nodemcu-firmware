@@ -429,7 +429,7 @@ static int wifi_setmaxtxpower( lua_State* L )
 
 #ifdef PMSLEEP_ENABLE
 /* Begin WiFi suspend functions*/
-#include <pm/pmSleep.h>
+#include "pmSleep.h"
 
 static int wifi_resume_cb_ref = LUA_NOREF; // Holds resume callback reference
 static int wifi_suspend_cb_ref = LUA_NOREF; // Holds suspend callback reference
@@ -511,19 +511,6 @@ static int wifi_resume(lua_State* L)
 }
 
 /* End WiFi suspend functions*/
-#else
-static char *susp_note_str = "\n The option \"PMSLEEP_ENABLE\" in \"app/include/user_config.h\" was disabled during FW build!\n";
-static char *susp_unavailable_str = "wifi.suspend is unavailable";
-
-static int wifi_suspend(lua_State* L){
-  dbg_printf("%s", susp_note_str);
-  return luaL_error(L, susp_unavailable_str);
-}
-
-static int wifi_resume(lua_State* L){
-  dbg_printf("%s", susp_note_str);
-  return luaL_error(L, susp_unavailable_str);
-}
 #endif
 
 // Lua: wifi.nullmodesleep()
@@ -976,7 +963,7 @@ static int wifi_station_config( lua_State* L )
 
     lua_State* L_temp = NULL;
 
-    lua_getfield(L, 1, "connect_cb");
+    lua_getfield(L, 1, "connected_cb");
     if (!lua_isnil(L, -1))
     {
       if (lua_isfunction(L, -1))
@@ -989,12 +976,12 @@ static int wifi_station_config( lua_State* L )
       }
       else
       {
-        return luaL_argerror(L, 1, "connect_cb:not function");
+        return luaL_argerror(L, 1, "connected_cb:not function");
       }
     }
     lua_pop(L, 1);
 
-    lua_getfield(L, 1, "disconnect_cb");
+    lua_getfield(L, 1, "disconnected_cb");
     if (!lua_isnil(L, -1))
     {
       if (lua_isfunction(L, -1))
@@ -1007,7 +994,7 @@ static int wifi_station_config( lua_State* L )
       }
       else
       {
-        return luaL_argerror(L, 1, "disconnect_cb:not function");
+        return luaL_argerror(L, 1, "disconnected_cb:not function");
       }
     }
     lua_pop(L, 1);
@@ -1158,9 +1145,8 @@ static int wifi_station_listap( lua_State* L )
   {
     return luaL_error( L, "Can't list ap in SOFTAP mode" );
   }
-  // set safe defaults for scan time, all other members are initialized with 0
-  // source: https://github.com/espressif/ESP8266_NONOS_SDK/issues/103
-  struct scan_config scan_cfg = {.scan_time = {.passive=120, .active = {.max=120, .min=60}}};
+  struct scan_config scan_cfg;
+  memset(&scan_cfg, 0, sizeof(scan_cfg));
 
   getap_output_format=0;
 
@@ -1788,7 +1774,7 @@ static int wifi_ap_listclient( lua_State* L )
 {
   if (wifi_get_opmode() == STATION_MODE)
   {
-    return luaL_error( L, "Can't list clients in STATION mode" );
+    return luaL_error( L, "Can't list client in STATION_MODE mode" );
   }
 
   char temp[64];
@@ -1801,9 +1787,10 @@ static int wifi_ap_listclient( lua_State* L )
   {
     c_sprintf(temp, MACSTR, MAC2STR(station->bssid));
     wifi_add_sprintf_field(L, temp, IPSTR, IP2STR(&station->ip));
-    station = STAILQ_NEXT(station, next);
+    next_station = STAILQ_NEXT(station, next);
+    c_free(station);
+    station = next_station;
   }
-  wifi_softap_free_station_info();
 
   return 1;
 }
@@ -1923,8 +1910,10 @@ static const LUA_REG_TYPE wifi_map[] =  {
   { LSTRKEY( "setphymode" ),     LFUNCVAL( wifi_setphymode ) },
   { LSTRKEY( "getphymode" ),     LFUNCVAL( wifi_getphymode ) },
   { LSTRKEY( "setmaxtxpower" ),  LFUNCVAL( wifi_setmaxtxpower ) },
+#ifdef PMSLEEP_ENABLE
   { LSTRKEY( "suspend" ),        LFUNCVAL( wifi_suspend ) },
   { LSTRKEY( "resume" ),         LFUNCVAL( wifi_resume ) },
+#endif
   { LSTRKEY( "nullmodesleep" ),  LFUNCVAL( wifi_null_mode_auto_sleep ) },
 #ifdef WIFI_SMART_ENABLE 
   { LSTRKEY( "startsmart" ),     LFUNCVAL( wifi_start_smart ) },

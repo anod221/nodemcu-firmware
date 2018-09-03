@@ -8,7 +8,7 @@
 #include "user_interface.h"
 #include "driver/uart.h"
 #include "osapi.h"
-#include "pm/swtimer.h"
+#include "swTimer/swTimer.h"
 
 #include "ws2812.h"
 #include "color_utils.h"

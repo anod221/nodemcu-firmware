@@ -52,9 +52,7 @@ extern void luaL_assertfail(const char *file, int line, const char *message);
 
 #define ICACHE_STORE_TYPEDEF_ATTR __attribute__((aligned(4),packed))
 #define ICACHE_STORE_ATTR __attribute__((aligned(4)))
-#define ICACHE_RAM_STRING(x) ICACHE_RAM_STRING2(x)
-#define ICACHE_RAM_STRING2(x) #x
-#define ICACHE_RAM_ATTR     __attribute__((section(".iram0.text." __FILE__ "." ICACHE_RAM_STRING(__LINE__))))
+#define ICACHE_RAM_ATTR __attribute__((section(".iram0.text")))
 #ifdef  GPIO_SAFE_NO_INTR_ENABLE
 #define NO_INTR_CODE ICACHE_RAM_ATTR __attribute__ ((noinline))
 #else
@@ -91,7 +89,7 @@ extern void luaL_assertfail(const char *file, int line, const char *message);
 // (minus the 16k parameter space). THis is useful for certain OTA scenarios
 // #define SPIFFS_SIZE_1M_BOUNDARY
 
-// #define LUA_NUMBER_INTEGRAL
+#define LUA_NUMBER_INTEGRAL
 
 #define READLINE_INTERVAL 80
 #define LUA_TASK_PRIO USER_TASK_PRIO_0
@@ -116,8 +114,8 @@ extern void luaL_assertfail(const char *file, int line, const char *message);
 #define WIFI_SDK_EVENT_MONITOR_ENABLE
 #define WIFI_EVENT_MONITOR_DISCONNECT_REASON_LIST_ENABLE
 
-//#define PMSLEEP_ENABLE // Enable wifi.suspend() and node.sleep() (NOTE: node.sleep() is dependent on TIMER_SUSPEND_ENABLE)
-//#define TIMER_SUSPEND_ENABLE //Required by node.sleep()
+////#define ENABLE_TIMER_SUSPEND
+//#define PMSLEEP_ENABLE
 
 
 #define STRBUF_DEFAULT_INCREMENT 32

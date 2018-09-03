@@ -432,8 +432,7 @@ static int file_g_read( lua_State* L, int n, int16_t end_char, int fd )
       luaM_free(L, heap_mem);
       heap_mem = NULL;
     }
-    lua_pushnil(L);
-    return 1;
+    return 0;
   }
 
   vfs_lseek(fd, -(n - i), VFS_SEEK_CUR);

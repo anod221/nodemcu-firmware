@@ -20,7 +20,6 @@
 #include "limits.h"
 #include "httpclient.h"
 #include "stdlib.h"
-#include "pm/swtimer.h"
 
 #define REDIRECTION_FOLLOW_MAX 20
 
@@ -122,7 +121,7 @@ static int ICACHE_FLASH_ATTR http_chunked_decode( const char * chunked, char * d
 	 *
 	 */
 
-	return(j);
+	return(decode_size);
 }
 
 
@@ -306,6 +305,7 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback( void * arg )
 		request_args_t	* req		= (request_args_t *) conn->reverse;
 		int		http_status	= -1;
 		char		* body		= "";
+		int             body_size       = 0;
 
 		// Turn off timeout timer
 		os_timer_disarm( &(req->timeout_timer) );
@@ -414,15 +414,17 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback( void * arg )
 						  body = body + 4;
 					}
 
+					body_size = req->buffer_size - (body - req->buffer);
 					if ( os_strstr( req->buffer, "Transfer-Encoding: chunked" ) )
 					{
-						int	body_size = req->buffer_size - (body - req->buffer);
-						char	chunked_decode_buffer[body_size];
+					        char *chunked_decode_buffer = os_malloc(body_size);
 						os_memset( chunked_decode_buffer, 0, body_size );
 						/* Chuncked data */
-						http_chunked_decode( body, chunked_decode_buffer );
+						body_size = http_chunked_decode( body, chunked_decode_buffer );
 						os_memcpy( body, chunked_decode_buffer, body_size );
+						os_free( chunked_decode_buffer );
 					}
+					else --body_size;
 				}
 			}
 		}
@@ -435,7 +437,7 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback( void * arg )
 
 		  http_free_req( req );
 
-                  req_callback( body, http_status, &req_buffer );
+                  req_callback( body, http_status, &req_buffer, body_size );
                   if (req_buffer) {
                     os_free(req_buffer);
                   }
@@ -501,7 +503,7 @@ static void ICACHE_FLASH_ATTR http_dns_callback( const char * hostname, ip_addr_
 		HTTPCLIENT_ERR( "DNS failed for %s", hostname );
 		if ( req->callback_handle != NULL )
 		{
-			req->callback_handle( "", -1, NULL );
+		      req->callback_handle( "", -1, NULL, 0 );
 		}
 		http_free_req( req );
 	}
@@ -526,8 +528,6 @@ static void ICACHE_FLASH_ATTR http_dns_callback( const char * hostname, ip_addr_
 		/* Set connection timeout timer */
 		os_timer_disarm( &(req->timeout_timer) );
 		os_timer_setfn( &(req->timeout_timer), (os_timer_func_t *) http_timeout_callback, conn );
-		SWTIMER_REG_CB(http_timeout_callback, SWTIMER_IMMEDIATE);
-		  //http_timeout_callback frees memory used by this function and timer cannot be dropped
 		os_timer_arm( &(req->timeout_timer), req->timeout, false );
 
 #ifdef CLIENT_SSL_ENABLE

@@ -8,7 +8,8 @@
 #include <stdio.h>
 #include <setjmp.h>
 
-#define LIT_POINT          // TODO: 替换这个地方为函数
+#define _SSD_1306_128X64_
+#include "acf.h"
 
 // 画点函数
 #ifndef LIT_POINT

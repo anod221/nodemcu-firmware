@@ -229,10 +229,12 @@ const char* acf_draw( int x, int y, unsigned width, const char *utf8_line )
   unsigned *option = width == 0 ? NULL : &width;
   for( const char *next = next_unicode(utf8_line, &unicode);
        next != NULL;
-       next = next_unicode(next, &unicode) )
+       next = next_unicode(utf8_line, &unicode) )
     {
       int error = render_unicode( font, &x, &y, unicode, option );
-      if( error ) return next;
+      if( error ) return utf8_line;
+
+      utf8_line = next;
     }
   return NULL;
 }

@@ -54,7 +54,7 @@ static int ICACHE_FLASH_ATTR irsend_write( lua_State *L )
 // If call the uart_config function directly, a pulse will be found. 
 // Because the bit UART_TXD_INV is not set when write the UART_CONF0 reg.
 // To avoid this, the bit should be set when call the WRITE_PERI_REG.
-void set_uart( uint32 baudrate )
+static void set_uart( uint32 baudrate )
 {
   wait_tx_empty();
 
@@ -86,7 +86,7 @@ void set_uart( uint32 baudrate )
   ETS_UART_INTR_ENABLE();
 }
 
-void set_carrier( uint32 hz, uint32 duty )
+static void set_carrier( uint32 hz, uint32 duty )
 {
   // set the pwm
   uint32 baudrate = BAUDRATE_AS_CARRIER(hz);
@@ -100,7 +100,7 @@ void set_carrier( uint32 hz, uint32 duty )
   set_uart( baudrate );
 }
 
-void send_mark( uint32 usec )
+static void send_mark( uint32 usec )
 {
   int npwm = 100 * usec / usec_per100bytes;
 
@@ -115,7 +115,7 @@ void send_mark( uint32 usec )
   wait_tx_empty();
 }
 
-void send_space( uint32 usec )
+static void send_space( uint32 usec )
 {
   if( usec <= USHRT_MAX ) os_delay_us( usec-5 );//e.g. comp, add, push, call, leave, ret.
   else {

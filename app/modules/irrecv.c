@@ -175,10 +175,6 @@ static int ICACHE_FLASH_ATTR irrecv_bind( lua_State *L ){
     dup_mask = pin_set(dup_mask, pin);
     platform_gpio_register_intr_hook(dup_mask, gpio_intr_handler);
   }
-  // TODO: DELETE BEGIN
-  platform_gpio_mode(4, PLATFORM_GPIO_OUTPUT, PLATFORM_GPIO_FLOAT);
-  platform_gpio_write(4, PLATFORM_GPIO_HIGH);
-  // TODO: DELETE END
 }
 
 // Module function map

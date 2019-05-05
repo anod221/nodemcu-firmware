@@ -43,31 +43,32 @@ end, 0)
 ```
 
 ## acfcanvas
-This module is a util of font rendering for u8g.
+This module is a util of font rendering for u8g.  
+  
+`acfcanvas.setup( fontname_str, canvas_width, canvas_height )`  
+`fontname_str` - The acf font file on flash.  
+`canvas_width` - The width of the canvas for rendering.  
+`canvas_height` - The height of the canvas for rendering.  
+`return` - 0 for success, otherwise failed.  
+Create the canvas, using the font with the file 'fontname_str' and the size with canvas_width/canvas_height.    
 
-`acfcanvas.setup( fontname_str, canvas_width, canvas_height )`
-`fontname_str` - The acf font file on flash.
-`canvas_width` - The width of the canvas for rendering.
-`canvas_height` - The height of the canvas for rendering.
-`return` - 0 for success, otherwise failed.
-Create the canvas, using the font with the file 'fontname_str' and the size with canvas_width/canvas_height.
+`acfcanvas.clear( [rowstart[, rowend]] )`  
+`rowstart` - The start row to be cleared, when 0 means the bottom row.  
+`rowend` - The row after the last row to be cleared, default to rowstart + 1.  
+`return` - 0 when successed.  
+Erase one or multi row.    
 
-`acfcanvas.clear( [rowstart[, rowend]] )`
-`rowstart` - The start row to be cleared, when 0 means the bottom row.
-`rowend` - The row after the last row to be cleared, default to rowstart + 1.
-`return` - 0 when successed.
-Erase one or multi row.
-
-`acfcanvas.draw( x, y, width_max, str ) `
-`x`, `y` - The base point for font rendering.
-`width_max` - The max width of rendering the string, 0 means no limit.
-`str` - The string for rendering.
-`return` - nil when width is enough, or a new string for not rendered.
-
-`acfcanvas.u8gbmp()`
-`return` - lua-string.
-Get the bitmap data for u8g **drawBitmap** method.
-
+`acfcanvas.draw( x, y, width_max, str ) `  
+`x`, `y` - The base point for font rendering.  
+`width_max` - The max width of rendering the string, 0 means no limit.  
+`str` - The string for rendering.  
+`return` - nil when width is enough, or a new string for not rendered.  
+Print a line at base point (x,y).    
+  
+`acfcanvas.u8gbmp()`  
+`return` - lua-string.  
+Get the bitmap data for u8g **drawBitmap** method.  
+  
 ```lua
 acfcanvas.setup( "somefont.acf", 256, 16 )
 acfcanvas.clear()

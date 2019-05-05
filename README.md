@@ -76,4 +76,4 @@ acfcanvas.draw( 25, 2, 0, "hello,world!" )
 local data = acfcanvas.u8gbmp()
 disp:drawBitmap(0,0, 32, 16, data)
 ```
-Rendering one string with the acf font.
+

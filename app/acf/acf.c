@@ -4,16 +4,19 @@
  * 2数据索引，总共是字体数量*5个字节。其中5个字节内容是前2字节的unicode编码和后3字节的数据偏移量
  * 3数据，每个数据是前4个字节的bbx，第5个字节的前7位是DWIDTH的x分量，后1位0表示位图每次读取1字节，为1表示每次读取2字节。第6个字节及以后是BITMAP的数据，总长度是bbx[1]的长度。
  */
-#include <c_stdint.h>
-#include <stdio.h>
+#include "c_stdint.h"
+#include "c_stdio.h"
+#include "c_stdlib.h"
+#include "c_string.h"
+#include "vfs.h"
+
 #include <setjmp.h>
 
-#define _SSD_1306_128X64_
 #include "acf.h"
 
 // 画点函数
-#ifndef LIT_POINT
-#error "LIT_POINT SHOULD BE DECLARE BEFORE USING GB2312 FONT"
+#ifndef ACF_LIT_POINT
+#error "ACF_LIT_POINT SHOULD BE DECLARE BEFORE USING GB2312 FONT"
 #endif
 
 typedef struct {
@@ -22,16 +25,14 @@ typedef struct {
   int8_t      offsetx;
   int8_t      offsety;
   uint16_t    amount;
-  const char *filename;
+  char *      filename;
   size_t      filesize;
   jmp_buf     except;
 } ACFont;
 
-static ACFont gblfont;
-
-#define ACFONT_NOT_FOUND -1
-#define ACFONT_INVALID   -2
-#define ACFONT_READ_EOF  -3
+static ACFont gblfont = {
+  0,0,0,0,0,NULL,0
+};
 
 #define ACFONT_HEAD_SIZE 6
 #define ACFONT_HEAD_AMOUNT( buf )  ( (buf)[0]+(buf)[1]*0x100 )
@@ -44,40 +45,40 @@ static ACFont gblfont;
 #define ACFONT_INDEX( n )          ( ACFONT_HEAD_SIZE + (n)*ACFONT_SIZEOF_INDEX )
 #define ACFONT_INDEX_VALUE( f, n ) ( 0x10000*readUInt8( f, ACFONT_INDEX(n)+2 ) + readUInt16( f, ACFONT_INDEX(n)+3 ) )
 
-static inline uint8_t readUInt8( FILE *f, int pos )
+static inline uint8_t readUInt8( int fd, int pos )
 {
   if( pos >= gblfont.filesize ) {
     longjmp( gblfont.except, ACFONT_READ_EOF );
   }
-  fseek( f, pos, SEEK_SET );
-  return (uint8_t)fgetc(f);
+  vfs_lseek( fd, pos, VFS_SEEK_SET );
+  return (uint8_t)vfs_getc( fd );
 }
-static inline int8_t readInt8( FILE *f, int pos )
+static inline int8_t readInt8( int fd, int pos )
 {
   if( pos >= gblfont.filesize ) {
     longjmp( gblfont.except, ACFONT_READ_EOF );
   }
-  fseek( f, pos, SEEK_SET );
-  return (int8_t)fgetc(f);
+  vfs_lseek( fd, pos, VFS_SEEK_SET );
+  return (int8_t)vfs_getc( fd );
  }
-static inline uint16_t readUInt16( FILE *f, int pos )
+static inline uint16_t readUInt16( int fd, int pos )
 {
   if( pos >= gblfont.filesize ) {
     longjmp( gblfont.except, ACFONT_READ_EOF );
   }
-  fseek( f, pos, SEEK_SET );
-  int lb = fgetc(f);
-  int hb = fgetc(f);
+  vfs_lseek( fd, pos, VFS_SEEK_SET );
+  int lb = vfs_getc( fd );
+  int hb = vfs_getc( fd );
   return (uint16_t)( lb | (hb<<8) );
 }
-static inline int16_t readInt16( FILE *f, int pos )
+static inline int16_t readInt16( int fd, int pos )
 {
   if( pos >= gblfont.filesize ) {
     longjmp( gblfont.except, ACFONT_READ_EOF );
   }
-  fseek( f, pos, SEEK_SET );
-  int lb = fgetc(f);
-  int hb = fgetc(f);
+  vfs_lseek( fd, pos, VFS_SEEK_SET );
+  int lb = vfs_getc( fd );
+  int hb = vfs_getc( fd );
   return (int16_t)( lb | (hb<<8) );
 }
 
@@ -89,27 +90,35 @@ static inline int16_t readInt16( FILE *f, int pos )
 int acf_set_font( const char *acfile )
 {
   // open the font file
-  FILE *font = fopen( acfile, "rb" );
-  if( font == NULL ) return ACFONT_NOT_FOUND;
+  int font = vfs_open( acfile, "rb" );
+  if( font == 0 ) return ACFONT_NOT_FOUND;
  
   // 读取数据
   uint8_t head[ACFONT_HEAD_SIZE];
-  if( fread( head, ACFONT_HEAD_SIZE, 1, font ) != 1 ){
-    fclose( font );
+  if( vfs_read( font, head, ACFONT_HEAD_SIZE ) != ACFONT_HEAD_SIZE ){
+    vfs_close( font );
     return ACFONT_INVALID;
   }
 
-  gblfont.filename = acfile;
   gblfont.amount = ACFONT_HEAD_AMOUNT( head );
   gblfont.width = ACFONT_HEAD_WIDTH( head );
   gblfont.height = ACFONT_HEAD_HEIGHT( head );
   gblfont.offsetx = ACFONT_HEAD_OFFSETX( head );
   gblfont.offsety = ACFONT_HEAD_OFFSETY( head );
 
-  fseek( font, 0, SEEK_END );
-  gblfont.filesize = ftell( font );
+  vfs_lseek( font, 0, VFS_SEEK_END );
+  gblfont.filesize = vfs_tell( font );
+
+  if( gblfont.filename != NULL )
+    c_free( gblfont.filename );
+
+  int len = strlen( acfile );
+  char *file = (char*)c_malloc( len+1 );
+  memcpy( file, acfile, len );
+  file[len] = 0;
+  gblfont.filename = file;
   
-  fclose( font );
+  vfs_close( font );
   return 0;
 }
 
@@ -153,34 +162,34 @@ static inline const char* next_unicode( const char *utf8, uint32_t *code )
   return utf8;
 }
 
-static inline int bsearch_font( FILE *f, uint32_t unicode )
+static inline int bsearch_font( int fd, uint32_t unicode )
 {
   int min = 0, max = gblfont.amount;
   for( int m=(min+max)>>1; min < m; m = (min+max)>>1 ){
-    uint32_t code = readUInt16( f, ACFONT_INDEX(m) );
+    uint32_t code = readUInt16( fd, ACFONT_INDEX(m) );
     if( unicode < code ) max = m;
     else if( code < unicode ) min = m;
-    else return ACFONT_INDEX_VALUE( f, m );
+    else return ACFONT_INDEX_VALUE( fd, m );
   }
   return -1;
 }
 
-static int render_unicode( FILE *f, int *x, int *y, uint32_t code, unsigned *width_max )
+static int render_unicode( int fd, int *x, int *y, unsigned width, unsigned height, uint32_t code, unsigned *width_max )
 {
   int result = setjmp( gblfont.except );
   if( result == 0 ){
     // 获取code对应的字体信息
-    int font_pos = bsearch_font( f, code );
+    int font_pos = bsearch_font( fd, code );
     if( font_pos < 0 ) return 0;
     if( font_pos > gblfont.filesize ) return 0;
 
     int font_base = ACFONT_HEAD_SIZE + gblfont.amount * ACFONT_SIZEOF_INDEX;
     font_base += font_pos;
     int8_t bbx[4];
-    fseek( f, font_base, SEEK_SET );
-    fread( bbx, sizeof( bbx ), 1, f );
+    vfs_lseek( fd, font_base, VFS_SEEK_SET );
+    vfs_read( fd, bbx, sizeof( bbx ) );
 
-    int sl = fgetc( f );
+    int sl = vfs_getc( fd );
     int size = (sl%2) + 1;
     int len = sl >> 1;
 
@@ -199,9 +208,9 @@ static int render_unicode( FILE *f, int *x, int *y, uint32_t code, unsigned *wid
     // 绘制
     uint32_t mask = 1 << (8*( (bbx[0]-1)>>3 )+7);
     for( int i=0; i < bbx[1]; ++i ){
-      int data = size == 1 ? fgetc(f) : (fgetc(f) | fgetc(f)<<8);
+      int data = size == 1 ? vfs_getc(fd) : (vfs_getc(fd) | vfs_getc(fd)<<8);
       for( int j=0; j < bbx[0]; ++j ){
-        LIT_POINT( cx+j, cy-i, (data & mask) == mask );
+        ACF_LIT_POINT( cx+j, cy-i, width, height, (data & mask) == mask );
         data <<= 1;
       }
     }
@@ -221,10 +230,13 @@ static int render_unicode( FILE *f, int *x, int *y, uint32_t code, unsigned *wid
 // width - 最长绘制多少个像素点，填0则忽略此参数
 // utf8_line - utf8字符串
 // 返回：第一个未绘制的字符的位置，如果width为0，则返回永远是NULL
-const char* acf_draw( int x, int y, unsigned width, const char *utf8_line )
+const char* acf_draw( int x, int y, unsigned width, unsigned height, unsigned maxwidth, const char *utf8_line )
 {
-  FILE *font = fopen( gblfont.filename, "r" );
-  if( font == NULL ) return utf8_line;
+  int font = vfs_open( gblfont.filename, "rb" );
+  if( font == 0 ) {
+    c_printf("open file failed %s", gblfont.filename );
+    return utf8_line;
+  }
   
   uint32_t unicode;
   unsigned *option = width == 0 ? NULL : &width;
@@ -232,10 +244,14 @@ const char* acf_draw( int x, int y, unsigned width, const char *utf8_line )
        next != NULL;
        next = next_unicode(utf8_line, &unicode) )
     {
-      int error = render_unicode( font, &x, &y, unicode, option );
-      if( error ) return utf8_line;
+      int error = render_unicode( font, &x, &y, width, height, unicode, option );
+      if( error ) {
+	vfs_close( font );
+	return utf8_line;
+      }
 
       utf8_line = next;
     }
+  vfs_close( font );
   return NULL;
 }

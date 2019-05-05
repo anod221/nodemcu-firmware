@@ -15,7 +15,7 @@ ifndef PDIR
 GEN_LIBS = acf.a
 endif
 
-STD_CFLAGS=-std=gnu11 -Wimplicit
+STD_CFLAGS=-std=gnu11 -Wimplicit -Wno-undef
 
 #############################################################
 # Configuration i.e. compile options etc.

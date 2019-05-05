@@ -74,5 +74,9 @@ void luaL_openlibs (lua_State *L) {
       lua_call(L, 1, 0);
     }
   }
+#ifdef LUA_USE_MODULES_BYTEARR
+  extern int luaopen_bytearr(lua_State*);
+  luaopen_bytearr(L);
+#endif
 }
 

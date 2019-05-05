@@ -1,0 +1,7 @@
+#ifndef _ANOD_COMPILED_FONT_CFG_
+#define _ANOD_COMPILED_FONT_CFG_
+
+#include "acf_dev.h"
+#define ACF_CANVAS ACFDEV_U8GBITMAP
+
+#endif//_ANOD_COMPILED_FONT_CFG_

@@ -3,9 +3,10 @@
 
 #include <stdint.h>
 
-#define ACFONT_NOT_FOUND -1
-#define ACFONT_INVALID   -2
-#define ACFONT_READ_EOF  -3
+#define ACFONT_NOT_FOUND   -1
+#define ACFONT_INVALID     -2
+#define ACFONT_READ_EOF    -3
+#define ACFONT_NOT_SUPPORT -4
 
 extern uint8_t *acfCanvas;
 extern int acf_set_font( const char * );

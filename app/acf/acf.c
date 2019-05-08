@@ -43,44 +43,10 @@ static ACFont gblfont = {
 
 #define ACFONT_SIZEOF_INDEX 5
 #define ACFONT_INDEX( n )          ( ACFONT_HEAD_SIZE + (n)*ACFONT_SIZEOF_INDEX )
-#define ACFONT_INDEX_VALUE( f, n ) ( 0x10000*readUInt8( f, ACFONT_INDEX(n)+2 ) + readUInt16( f, ACFONT_INDEX(n)+3 ) )
+#define ACFONT_INDEX_VALUE( data ) ( 0x10000*data[2] + data[3] + data[4]*0x100 )
 
-static inline uint8_t readUInt8( int fd, int pos )
-{
-  if( pos >= gblfont.filesize ) {
-    longjmp( gblfont.except, ACFONT_READ_EOF );
-  }
-  vfs_lseek( fd, pos, VFS_SEEK_SET );
-  return (uint8_t)vfs_getc( fd );
-}
-static inline int8_t readInt8( int fd, int pos )
-{
-  if( pos >= gblfont.filesize ) {
-    longjmp( gblfont.except, ACFONT_READ_EOF );
-  }
-  vfs_lseek( fd, pos, VFS_SEEK_SET );
-  return (int8_t)vfs_getc( fd );
- }
-static inline uint16_t readUInt16( int fd, int pos )
-{
-  if( pos >= gblfont.filesize ) {
-    longjmp( gblfont.except, ACFONT_READ_EOF );
-  }
-  vfs_lseek( fd, pos, VFS_SEEK_SET );
-  int lb = vfs_getc( fd );
-  int hb = vfs_getc( fd );
-  return (uint16_t)( lb | (hb<<8) );
-}
-static inline int16_t readInt16( int fd, int pos )
-{
-  if( pos >= gblfont.filesize ) {
-    longjmp( gblfont.except, ACFONT_READ_EOF );
-  }
-  vfs_lseek( fd, pos, VFS_SEEK_SET );
-  int lb = vfs_getc( fd );
-  int hb = vfs_getc( fd );
-  return (int16_t)( lb | (hb<<8) );
-}
+#define ACFONT_SIZEOF_BBX 4
+#define ACFONT_GLYPH_SIZE 40
 
 // 提供两个方法：
 // 1 设置字体文件名称
@@ -98,6 +64,10 @@ int acf_set_font( const char *acfile )
   if( vfs_read( font, head, ACFONT_HEAD_SIZE ) != ACFONT_HEAD_SIZE ){
     vfs_close( font );
     return ACFONT_INVALID;
+  }
+  if( ACFONT_HEAD_HEIGHT( head )*2 > ACFONT_GLYPH_SIZE ){
+    vfs_close( font );
+    return ACFONT_NOT_SUPPORT;
   }
 
   gblfont.amount = ACFONT_HEAD_AMOUNT( head );
@@ -133,48 +103,60 @@ int acf_set_font( const char *acfile )
  5 | 0020 0000 - 03FF FFFF |          111110xx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx  
  6 | 0400 0000 - 7FFF FFFF | 1111110x 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
  */
+#define BYTE_H 1u<<7
+#define TEST_H(c) ((c) & BYTE_H)
+#define ISSET_H(c) TEST_H(c) == BYTE_H
+#define EXBYTE 0x3fu
+#define EXDATA(c) ((c) & EXBYTE)
 static inline const char* next_unicode( const char *utf8, uint32_t *code )
 {
-  const uint8_t *str = utf8;
-  
-  uint8_t c = *utf8++;
-  if( c == 0 ){
+  if( utf8 == NULL || *utf8 == '\0' )
     return NULL;
+
+  uint8_t c = *utf8++;
+
+  if( c > 0x7f ) {
+    int n;
+    for(n = 0; ISSET_H(c); c <<= 1 )
+      ++n;
+    if( n > 1 ){
+      for( *code = 0, c >>= n;
+           n-->0;
+           c = EXDATA(*utf8++) )
+        *code = (*code<<6) | c;
+      --utf8;
+    }
+    else *code = c;
   }
-  else if( c < 0x80u ) {
-    *code = c;
-  }
-  else {
-    int n = 0;
-    *code = 0;
-    for(uint8_t t = c & 0x80; t == 0x80; t = c & 0x80)
-      {
-        c <<= 1;
-        ++n;
-      }
-    for(c >>= n; n-->0; c = (*utf8++) & 0x3f )
-      {
-        *code <<= 6;
-        *code |= c;
-      }
-    --utf8;
-  }
+  else *code = c;
+  
   return utf8;
 }
 
 static inline int bsearch_font( int fd, uint32_t unicode )
 {
   int min = 0, max = gblfont.amount;
+  uint8_t dat[ ACFONT_SIZEOF_INDEX ];
+  uint32_t code;
   for( int m=(min+max)>>1; min < m; m = (min+max)>>1 ){
-    uint32_t code = readUInt16( fd, ACFONT_INDEX(m) );
+    // read data from file
+    int pos = ACFONT_INDEX(m);
+    if( pos + ACFONT_SIZEOF_INDEX >= gblfont.filesize ){
+      longjmp( gblfont.except, ACFONT_READ_EOF );
+    }
+    vfs_lseek( fd, pos, VFS_SEEK_SET );
+    vfs_read( fd, dat, ACFONT_SIZEOF_INDEX );
+
+    // bsearch
+    uint32_t code = dat[0] | dat[1]<<8;
     if( unicode < code ) max = m;
     else if( code < unicode ) min = m;
-    else return ACFONT_INDEX_VALUE( fd, m );
+    else return ACFONT_INDEX_VALUE( dat );
   }
   return -1;
 }
 
-static int render_unicode( int fd, int *x, int *y, unsigned width, unsigned height, uint32_t code, unsigned *width_max )
+static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsigned height, uint32_t code, unsigned *width_max )
 {
   int result = setjmp( gblfont.except );
   if( result == 0 ){
@@ -182,12 +164,11 @@ static int render_unicode( int fd, int *x, int *y, unsigned width, unsigned heig
     int font_pos = bsearch_font( fd, code );
     if( font_pos < 0 ) return 0;
     if( font_pos > gblfont.filesize ) return 0;
+    font_pos += ACFONT_HEAD_SIZE + gblfont.amount * ACFONT_SIZEOF_INDEX;
 
-    int font_base = ACFONT_HEAD_SIZE + gblfont.amount * ACFONT_SIZEOF_INDEX;
-    font_base += font_pos;
-    int8_t bbx[4];
-    vfs_lseek( fd, font_base, VFS_SEEK_SET );
-    vfs_read( fd, bbx, sizeof( bbx ) );
+    int8_t bbx[ ACFONT_SIZEOF_BBX ];
+    vfs_lseek( fd, font_pos, VFS_SEEK_SET );
+    vfs_read( fd, bbx, ACFONT_SIZEOF_BBX );
 
     int sl = vfs_getc( fd );
     int size = (sl%2) + 1;
@@ -195,23 +176,35 @@ static int render_unicode( int fd, int *x, int *y, unsigned width, unsigned heig
 
     // render
     // 从上往下(y从大到小，x从小到大)进行绘制
-    int px = *x, py = *y;
-    int cx = px + bbx[2], cy = py + bbx[1] + bbx[3];
+    int px = *x, py = *y;                            // px/py不参与计算位置
+    int cx = px + bbx[2], cy = py + bbx[1] + bbx[3]; // cx/cy计算位置进行绘制
 
-    // 从cx/cy开始绘制
     // 先检查宽度
-    if( width_max != NULL ){
-      if( cx + bbx[0] >= *width_max )
-        return 1;
-    }
+    if( ( width_max != NULL ) && ( cx + bbx[0] >= *width_max ) )
+      return 1;
+
+    // 获取字体位图数据
+    uint8_t glyph[ ACFONT_GLYPH_SIZE ];
+    uint8_t szbmp = bbx[1] * size;
+    vfs_read( fd, glyph, szbmp );
 
     // 绘制
     uint32_t mask = 1 << (8*( (bbx[0]-1)>>3 )+7);
-    for( int i=0; i < bbx[1]; ++i ){
-      int data = size == 1 ? vfs_getc(fd) : (vfs_getc(fd) | vfs_getc(fd)<<8);
-      for( int j=0; j < bbx[0]; ++j ){
-        ACF_LIT_POINT( cx+j, cy-i, width, height, (data & mask) == mask );
-        data <<= 1;
+    if( size == 1 ){
+      for( int i=0; i < bbx[1]; ++i ){
+        for( int j=0; j < bbx[0]; ++j ){
+          ACF_LIT_POINT( cx+j, cy-i, width, height, (glyph[i] & mask) == mask );
+          glyph[i] <<= 1;
+        }
+      }
+    }
+    else {
+      for( int i=0; i < bbx[1]; ++i ){
+        int data = glyph[i<<1] | ( glyph[(i<<1)|1]<<8 );
+        for( int j=0; j < bbx[0]; ++j ){
+          ACF_LIT_POINT( cx+j, cy-i, width, height, (data & mask) == mask );
+          data <<= 1;
+        }
       }
     }
 

@@ -7,6 +7,7 @@
 #define ACFONT_INVALID     -2
 #define ACFONT_READ_EOF    -3
 #define ACFONT_NOT_SUPPORT -4
+#define ACFONT_MEM_EMPTY   -5
 
 extern uint8_t *acfCanvas;
 extern int acf_set_font( const char * );

@@ -25,7 +25,8 @@ typedef struct {
   int8_t      offsetx;
   int8_t      offsety;
   uint16_t    amount;
-  char *      filename;
+  char       *filename;
+  uint16_t   *chapter;
   size_t      filesize;
   jmp_buf     except;
 } ACFont;
@@ -47,6 +48,8 @@ static ACFont gblfont = {
 
 #define ACFONT_SIZEOF_BBX 4
 #define ACFONT_GLYPH_SIZE 40
+
+#define ACFONT_CHAPTER_MEMORY 320
 
 // 提供两个方法：
 // 1 设置字体文件名称
@@ -79,11 +82,46 @@ int acf_set_font( const char *acfile )
   vfs_lseek( font, 0, VFS_SEEK_END );
   gblfont.filesize = vfs_tell( font );
 
+  if( gblfont.chapter != NULL )
+    c_free( gblfont.chapter );
   if( gblfont.filename != NULL )
     c_free( gblfont.filename );
 
+  // get index chapters
+  // 1 decide chapter count
+  const int nparts = ACFONT_CHAPTER_MEMORY / ACFONT_SIZEOF_INDEX;
+  int nchapter = gblfont.amount / nparts;
+  if( nchapter * nparts < gblfont.amount ){
+    ++nchapter;
+  }
+
+  // 2 alloc cache for chapter
+  uint16_t *pchapter = (uint16_t*)c_malloc( nchapter * sizeof(uint16_t) );
+  if( pchapter == NULL ){
+    memset( &gblfont, 0, sizeof(gblfont) );
+    vfs_close( font );
+    return ACFONT_MEM_EMPTY;
+  }
+
+  // 3 load chapter to cache
+  for( int i=0; i < nchapter; ++i ){
+    int pos = ACFONT_INDEX(i * nparts);
+    vfs_lseek( font, pos, VFS_SEEK_SET );
+    vfs_read( font, head, 2 );
+    pchapter[i] = head[0] | (head[1]<<8);
+  }
+  gblfont.chapter = pchapter;
+
+  // save filename for `fopen`
   int len = strlen( acfile );
   char *file = (char*)c_malloc( len+1 );
+  if( file == NULL ){
+    c_free( gblfont.chapter );
+    memset( &gblfont, 0, sizeof(gblfont) );
+    vfs_close( font );
+    return ACFONT_MEM_EMPTY;
+  }
+
   memcpy( file, acfile, len );
   file[len] = 0;
   gblfont.filename = file;
@@ -133,27 +171,56 @@ static inline const char* next_unicode( const char *utf8, uint32_t *code )
   return utf8;
 }
 
-static inline int bsearch_font( int fd, uint32_t unicode )
+static int bsearch_font( int fd, uint32_t unicode )
 {
-  int min = 0, max = gblfont.amount;
-  uint8_t dat[ ACFONT_SIZEOF_INDEX ];
-  uint32_t code;
-  for( int m=(min+max)>>1; min < m; m = (min+max)>>1 ){
-    // read data from file
-    int pos = ACFONT_INDEX(m);
-    if( pos + ACFONT_SIZEOF_INDEX >= gblfont.filesize ){
-      longjmp( gblfont.except, ACFONT_READ_EOF );
-    }
-    vfs_lseek( fd, pos, VFS_SEEK_SET );
-    vfs_read( fd, dat, ACFONT_SIZEOF_INDEX );
+  // decide chapter count
+  const int nparts = ACFONT_CHAPTER_MEMORY / ACFONT_SIZEOF_INDEX;
+  int nchapter = gblfont.amount / nparts;
+  if( nchapter * nparts < gblfont.amount ) {
+    ++nchapter;
+  }
 
-    // bsearch
-    uint32_t code = dat[0] | dat[1]<<8;
+  int min = 0, max = nchapter;
+  int m, found = 0;
+
+    // search in chapter
+  for( m=(min+max)>>1; min < m; m=(min+max)>>1 ){
+    uint16_t code = gblfont.chapter[m];
     if( unicode < code ) max = m;
     else if( code < unicode ) min = m;
-    else return ACFONT_INDEX_VALUE( dat );
+    else { found = 1; break; }
   }
-  return -1;
+  if( found ) {
+    uint8_t dat[ ACFONT_SIZEOF_INDEX ];
+    vfs_lseek( fd, ACFONT_INDEX(nparts*m), VFS_SEEK_SET );
+    vfs_read( fd, dat, ACFONT_SIZEOF_INDEX );
+    return ACFONT_INDEX_VALUE( dat );
+  }
+
+  // not match in chapter, search in chapter's parts
+  int len = m+1 == nchapter ? (gblfont.amount % nparts) : nparts;
+  int size = len * ACFONT_SIZEOF_INDEX;
+  uint8_t *cache = (uint8_t*)c_malloc( size );
+  vfs_lseek( fd, ACFONT_INDEX(nparts*m), VFS_SEEK_SET );
+  vfs_read( fd, cache, size );
+
+  for( min=0, max=len, m=len>>1;
+       min < m;
+       m = (min+max) >> 1 )
+    {
+      int idx = m * ACFONT_SIZEOF_INDEX;
+      uint16_t code = cache[idx] | (cache[idx+1] << 8);
+      if( unicode < code ) max = m;
+      else if( code < unicode ) min = m;
+      else {
+        uint8_t *index = &cache[idx];
+        found = ACFONT_INDEX_VALUE( index );
+        break;
+      }
+    }
+  
+  c_free( cache );
+  return found ? found : -1;
 }
 
 static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsigned height, uint32_t code, unsigned *width_max )

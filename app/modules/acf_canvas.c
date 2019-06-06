@@ -53,8 +53,9 @@ static int ICACHE_FLASH_ATTR acfc_setup( lua_State *L )
       lua_pushstring( L, "font not exist" ); break;
     case ACFONT_INVALID:
     case ACFONT_READ_EOF:
-    default:
       lua_pushstring( L, "invalid font" ); break;
+    default:
+      lua_pushstring( L, "unsupport font"); break;
     }
     lua_error( L );
     return 0;

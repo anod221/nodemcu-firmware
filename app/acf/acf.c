@@ -32,7 +32,7 @@ typedef struct {
 } ACFont;
 
 static ACFont gblfont = {
-  0,0,0,0,0,NULL,0
+  0,0,0,0,0,NULL,NULL,0
 };
 
 #define ACFONT_HEAD_SIZE 6
@@ -183,7 +183,7 @@ static int bsearch_font( int fd, uint32_t unicode )
   int min = 0, max = nchapter;
   int m, found = 0;
 
-    // search in chapter
+  // search in chapter
   for( m=(min+max)>>1; min < m; m=(min+max)>>1 ){
     uint16_t code = gblfont.chapter[m];
     if( unicode < code ) max = m;

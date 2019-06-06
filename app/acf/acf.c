@@ -32,7 +32,7 @@ typedef struct {
 } ACFont;
 
 static ACFont gblfont = {
-  0,0,0,0,0,NULL,0
+  0,0,0,0,0,NULL,NULL,0
 };
 
 #define ACFONT_HEAD_SIZE 6
@@ -73,19 +73,21 @@ int acf_set_font( const char *acfile )
     return ACFONT_NOT_SUPPORT;
   }
 
+  // assign basic data from file
   gblfont.amount = ACFONT_HEAD_AMOUNT( head );
   gblfont.width = ACFONT_HEAD_WIDTH( head );
   gblfont.height = ACFONT_HEAD_HEIGHT( head );
   gblfont.offsetx = ACFONT_HEAD_OFFSETX( head );
   gblfont.offsety = ACFONT_HEAD_OFFSETY( head );
 
+  // get filesize
   vfs_lseek( font, 0, VFS_SEEK_END );
   gblfont.filesize = vfs_tell( font );
 
-  if( gblfont.chapter != NULL )
-    c_free( gblfont.chapter );
   if( gblfont.filename != NULL )
     c_free( gblfont.filename );
+  if( gblfont.chapter != NULL )
+    c_free( gblfont.chapter );
 
   // get index chapters
   // 1 decide chapter count
@@ -121,7 +123,7 @@ int acf_set_font( const char *acfile )
     vfs_close( font );
     return ACFONT_MEM_EMPTY;
   }
-
+  
   memcpy( file, acfile, len );
   file[len] = 0;
   gblfont.filename = file;
@@ -183,7 +185,7 @@ static int bsearch_font( int fd, uint32_t unicode )
   int min = 0, max = nchapter;
   int m, found = 0;
 
-    // search in chapter
+  // search in chapter
   for( m=(min+max)>>1; min < m; m=(min+max)>>1 ){
     uint16_t code = gblfont.chapter[m];
     if( unicode < code ) max = m;
@@ -191,10 +193,10 @@ static int bsearch_font( int fd, uint32_t unicode )
     else { found = 1; break; }
   }
   if( found ) {
-    uint8_t dat[ ACFONT_SIZEOF_INDEX ];
+    uint8_t v[ ACFONT_SIZEOF_INDEX ];
     vfs_lseek( fd, ACFONT_INDEX(nparts*m), VFS_SEEK_SET );
-    vfs_read( fd, dat, ACFONT_SIZEOF_INDEX );
-    return ACFONT_INDEX_VALUE( dat );
+    vfs_read( fd, v, ACFONT_SIZEOF_INDEX );
+    return ACFONT_INDEX_VALUE( v );
   }
 
   // not match in chapter, search in chapter's parts
@@ -256,9 +258,11 @@ static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsign
     vfs_read( fd, glyph, szbmp );
 
     // 绘制
+#if ACF_CANVAS != ACFDEV_U8GBITMAP
     uint32_t mask = 1 << (8*( (bbx[0]-1)>>3 )+7);
     if( size == 1 ){
       for( int i=0; i < bbx[1]; ++i ){
+        uint16_t data = glyph[i];
         for( int j=0; j < bbx[0]; ++j ){
           ACF_LIT_POINT( cx+j, cy-i, width, height, (glyph[i] & mask) == mask );
           glyph[i] <<= 1;
@@ -267,14 +271,86 @@ static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsign
     }
     else {
       for( int i=0; i < bbx[1]; ++i ){
-        int data = glyph[i<<1] | ( glyph[(i<<1)|1]<<8 );
+        uint16_t data = glyph[i<<1] | ( glyph[(i<<1)|1]<<8 );
         for( int j=0; j < bbx[0]; ++j ){
           ACF_LIT_POINT( cx+j, cy-i, width, height, (data & mask) == mask );
           data <<= 1;
         }
       }
     }
+#else
+    int left  = cx;
+    int right = cx + bbx[0]-1;
+    if( right < 0 || width <= left ){ // 优化1：不在范围内直接不显示，处理x
+      goto done;
+    }
 
+    int top = cy - 1;
+    int bottom = cy - bbx[1];
+    if( top < 0 || height <= bottom ){// 优化1：不在范围内直接不显示，处理y
+      goto done;
+    }
+    
+    int cross = cx < 0 ? cx%8 + 8 : cx % 8; //保证是正数
+    int idx_begin, idx_end;
+    int bwidth = ACF_BYTE_WIDTH(width, height);
+    uint8_t *pfont;
+
+    // begin inline function 
+#define RANGE_TEST( p, m ) ( 0<=(p) && (p)<(m) )
+#define INIT_CONTEXT_VAR() {                    \
+      int h = height - 1;                       \
+      idx_begin = bwidth * (h-top) + (cx/8);    \
+      idx_end = idx_begin + bbx[1] * bwidth;    \
+      pfont = glyph;                            \
+      if( top > h ) {                           \
+        idx_begin += (top-h)*bwidth;            \
+        pfont += (top-h)*size;                  \
+      }                                         \
+      if( bottom < 0 ){                         \
+        idx_end += bottom * bwidth;             \
+      }                                         \
+    }
+    // end inline function
+    
+    if( size == 1 ){
+      if( RANGE_TEST( cx, width ) ){
+        INIT_CONTEXT_VAR();
+        for( int i=idx_begin; i < idx_end; i+=bwidth, ++pfont )
+          acfCanvas[i] |= pfont[0]>>cross;
+      }
+
+      cx += 8;
+      if( RANGE_TEST( cx, width ) && cross + bbx[0] > 8 ){
+        INIT_CONTEXT_VAR();
+        for( int i=idx_begin, dcross=8-cross; i < idx_end; i+=bwidth, ++pfont )
+          acfCanvas[i] |= pfont[0]<<dcross;
+      }
+    }
+    else{ // size == 2
+      if( RANGE_TEST( cx, width ) ){
+        INIT_CONTEXT_VAR();
+        for( int i=idx_begin; i < idx_end; i+=bwidth, pfont+=2 )
+          acfCanvas[i] |= pfont[1]>>cross;
+      }
+
+      cx += 8;
+      if( RANGE_TEST( cx, width ) && cross + bbx[0] > 8 ){
+        INIT_CONTEXT_VAR();
+        for( int i=idx_begin, dcross=8-cross; i < idx_end; i+=bwidth, pfont+=2 )
+          acfCanvas[i] |= (pfont[1]<<dcross) | (pfont[0]>>cross);
+      }
+
+      cx += 8;
+      if( RANGE_TEST( cx, width ) && cross + bbx[0] > 16 ){
+        INIT_CONTEXT_VAR();
+        for( int i=idx_begin, dcross=8-cross; i < idx_end; i+=bwidth, pfont+=2 )
+          acfCanvas[i] |= pfont[0]<<dcross;
+      }
+    }
+#endif
+
+  done:
     // 更新
     *x = px + len;
     *y = py;

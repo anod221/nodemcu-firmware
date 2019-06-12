@@ -46,8 +46,8 @@ static ACFont gblfont = {
 #define ACFONT_INDEX( n )          ( ACFONT_HEAD_SIZE + (n)*ACFONT_SIZEOF_INDEX )
 #define ACFONT_INDEX_VALUE( data ) ( 0x10000*data[2] + data[3] + data[4]*0x100 )
 
-#define ACFONT_SIZEOF_BBX 4
-#define ACFONT_GLYPH_SIZE 40
+#define ACFONT_SIZEOF_BBX   4
+#define ACFONT_SIZEOF_GLYPH 64
 
 #define ACFONT_CHAPTER_MEMORY 320
 
@@ -68,7 +68,7 @@ int acf_set_font( const char *acfile )
     vfs_close( font );
     return ACFONT_INVALID;
   }
-  if( ACFONT_HEAD_HEIGHT( head )*2 > ACFONT_GLYPH_SIZE ){
+  if( ACFONT_SIZEOF_BBX + ACFONT_HEAD_HEIGHT( head )*ACFONT_HEAD_WIDTH( head ) / 8 > ACFONT_SIZEOF_GLYPH ){
     vfs_close( font );
     return ACFONT_NOT_SUPPORT;
   }
@@ -148,7 +148,7 @@ int acf_set_font( const char *acfile )
 #define ISSET_H(c) TEST_H(c) == BYTE_H
 #define EXBYTE 0x3fu
 #define EXDATA(c) ((c) & EXBYTE)
-static inline const char* next_unicode( const char *utf8, uint32_t *code )
+inline const char* next_unicode( const char *utf8, uint32_t *code )
 {
   if( utf8 == NULL || *utf8 == '\0' )
     return NULL;
@@ -225,7 +225,22 @@ static int bsearch_font( int fd, uint32_t unicode )
   return found ? found : -1;
 }
 
-static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsigned height, uint32_t code, unsigned *width_max )
+#define BIT_AT_POS( mem, idx )  ((mem)[(idx)/8] & (1<<((idx)%8)))
+#define SIZEOF_S6 6
+inline int readS6( uint8_t *p, int index )
+{
+  int ret = 0;
+  int symbol = BIT_AT_POS( p, index );
+  for( int i=0; i < SIZEOF_S6-1; ++i ){
+    ret <<= 1;
+    ++index;
+    if( BIT_AT_POS( p, index ) )
+      ret |= 1;
+  }
+  return symbol ? -ret : ret;
+}
+
+static int render_unicode( int fd, int *x, int *y, unsigned width, unsigned height, uint32_t code, unsigned *width_max )
 {
   int result = setjmp( gblfont.except );
   if( result == 0 ){
@@ -235,13 +250,16 @@ static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsign
     if( font_pos > gblfont.filesize ) return 0;
     font_pos += ACFONT_HEAD_SIZE + gblfont.amount * ACFONT_SIZEOF_INDEX;
 
-    int8_t bbx[ ACFONT_SIZEOF_BBX ];
+    uint8_t font[ ACFONT_SIZEOF_GLYPH ];
     vfs_lseek( fd, font_pos, VFS_SEEK_SET );
-    vfs_read( fd, bbx, ACFONT_SIZEOF_BBX );
+    vfs_read( fd, font, ACFONT_SIZEOF_GLYPH );
 
-    int sl = vfs_getc( fd );
-    int size = (sl%2) + 1;
-    int len = sl >> 1;
+    uint8_t bbx[4];
+    bbx[0] = readS6( font, 0 );
+    bbx[1] = readS6( font, SIZEOF_S6 );
+    bbx[2] = readS6( font, SIZEOF_S6*2 );
+    bbx[3] = readS6( font, SIZEOF_S6*3 );
+    int fw = readS6( font, SIZEOF_S6*4 );
 
     // render
     // 从上往下(y从大到小，x从小到大)进行绘制
@@ -252,107 +270,15 @@ static inline int render_unicode( int fd, int *x, int *y, unsigned width, unsign
     if( ( width_max != NULL ) && ( cx + bbx[0] >= *width_max ) )
       return 1;
 
-    // 获取字体位图数据
-    uint8_t glyph[ ACFONT_GLYPH_SIZE ];
-    uint8_t szbmp = bbx[1] * size;
-    vfs_read( fd, glyph, szbmp );
-
     // 绘制
-#if ACF_CANVAS != ACFDEV_U8GBITMAP
-    uint32_t mask = 1 << (8*( (bbx[0]-1)>>3 )+7);
-    if( size == 1 ){
-      for( int i=0; i < bbx[1]; ++i ){
-        uint16_t data = glyph[i];
-        for( int j=0; j < bbx[0]; ++j ){
-          ACF_LIT_POINT( cx+j, cy-i, width, height, (glyph[i] & mask) == mask );
-          glyph[i] <<= 1;
-        }
+    for( int i=0; i < bbx[1]; ++i ){
+      for( int j=0; j < bbx[0]; ++j ){
+        ACF_LIT_POINT( cx+j, cy-i, width, height, BIT_AT_POS(font+4, bbx[0]*i+j) );
       }
-    }
-    else {
-      for( int i=0; i < bbx[1]; ++i ){
-        uint16_t data = glyph[i<<1] | ( glyph[(i<<1)|1]<<8 );
-        for( int j=0; j < bbx[0]; ++j ){
-          ACF_LIT_POINT( cx+j, cy-i, width, height, (data & mask) == mask );
-          data <<= 1;
-        }
-      }
-    }
-#else
-    int left  = cx;
-    int right = cx + bbx[0]-1;
-    if( right < 0 || width <= left ){ // 优化1：不在范围内直接不显示，处理x
-      goto done;
-    }
-
-    int top = cy - 1;
-    int bottom = cy - bbx[1];
-    if( top < 0 || height <= bottom ){// 优化1：不在范围内直接不显示，处理y
-      goto done;
     }
     
-    int cross = cx < 0 ? cx%8 + 8 : cx % 8; //保证是正数
-    int idx_begin, idx_end;
-    int bwidth = ACF_BYTE_WIDTH(width, height);
-    uint8_t *pfont;
-
-    // begin inline function 
-#define RANGE_TEST( p, m ) ( 0<=(p) && (p)<(m) )
-#define INIT_CONTEXT_VAR() {                    \
-      int h = height - 1;                       \
-      idx_begin = bwidth * (h-top) + (cx/8);    \
-      idx_end = idx_begin + bbx[1] * bwidth;    \
-      pfont = glyph;                            \
-      if( top > h ) {                           \
-        idx_begin += (top-h)*bwidth;            \
-        pfont += (top-h)*size;                  \
-      }                                         \
-      if( bottom < 0 ){                         \
-        idx_end += bottom * bwidth;             \
-      }                                         \
-    }
-    // end inline function
-    
-    if( size == 1 ){
-      if( RANGE_TEST( cx, width ) ){
-        INIT_CONTEXT_VAR();
-        for( int i=idx_begin; i < idx_end; i+=bwidth, ++pfont )
-          acfCanvas[i] |= pfont[0]>>cross;
-      }
-
-      cx += 8;
-      if( RANGE_TEST( cx, width ) && cross + bbx[0] > 8 ){
-        INIT_CONTEXT_VAR();
-        for( int i=idx_begin, dcross=8-cross; i < idx_end; i+=bwidth, ++pfont )
-          acfCanvas[i] |= pfont[0]<<dcross;
-      }
-    }
-    else{ // size == 2
-      if( RANGE_TEST( cx, width ) ){
-        INIT_CONTEXT_VAR();
-        for( int i=idx_begin; i < idx_end; i+=bwidth, pfont+=2 )
-          acfCanvas[i] |= pfont[1]>>cross;
-      }
-
-      cx += 8;
-      if( RANGE_TEST( cx, width ) && cross + bbx[0] > 8 ){
-        INIT_CONTEXT_VAR();
-        for( int i=idx_begin, dcross=8-cross; i < idx_end; i+=bwidth, pfont+=2 )
-          acfCanvas[i] |= (pfont[1]<<dcross) | (pfont[0]>>cross);
-      }
-
-      cx += 8;
-      if( RANGE_TEST( cx, width ) && cross + bbx[0] > 16 ){
-        INIT_CONTEXT_VAR();
-        for( int i=idx_begin, dcross=8-cross; i < idx_end; i+=bwidth, pfont+=2 )
-          acfCanvas[i] |= pfont[0]<<dcross;
-      }
-    }
-#endif
-
-  done:
     // 更新
-    *x = px + len;
+    *x = px + fw;
     *y = py;
     return 0;
   }

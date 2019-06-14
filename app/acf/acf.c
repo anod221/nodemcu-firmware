@@ -49,7 +49,7 @@ static ACFont gblfont = {
 #define ACFONT_SIZEOF_BBX   4
 #define ACFONT_SIZEOF_GLYPH 64
 
-#define ACFONT_CHAPTER_MEMORY 320
+#define ACFONT_CHAPTER_MEMORY 480
 
 // 提供两个方法：
 // 1 设置字体文件名称

@@ -254,7 +254,7 @@ static int render_unicode( int fd, int *x, int *y, unsigned width, unsigned heig
     vfs_lseek( fd, font_pos, VFS_SEEK_SET );
     vfs_read( fd, font, ACFONT_SIZEOF_GLYPH );
 
-    uint8_t bbx[4];
+    int8_t bbx[4];
     bbx[0] = readS6( font, 0 );
     bbx[1] = readS6( font, SIZEOF_S6 );
     bbx[2] = readS6( font, SIZEOF_S6*2 );
